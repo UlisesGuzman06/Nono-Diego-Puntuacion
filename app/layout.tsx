@@ -1,9 +1,15 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Nono Diego - Sistema de Puntos",
-  description: "Sistema de puntos de fidelidad para pizzería Nono Diego",
+  description: "Sistema de puntos de fidelidad para Nono Diego",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({

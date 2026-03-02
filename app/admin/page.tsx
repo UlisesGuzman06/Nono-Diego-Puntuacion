@@ -135,15 +135,7 @@ export default async function AdminPage() {
           <div className="table-header-row">
             <div className="table-title">➕ Nuevo Cliente</div>
           </div>
-          <form
-            action={crearUsuario}
-            style={{
-              padding: "24px",
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "16px",
-            }}
-          >
+          <form action={crearUsuario} className="admin-form">
             <div className="form-group" style={{ margin: 0 }}>
               <label htmlFor="nombre">Nombre *</label>
               <input

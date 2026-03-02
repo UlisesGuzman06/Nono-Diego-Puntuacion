@@ -530,7 +530,16 @@ body {
   box-shadow: none;
 }
 
+/* ---- Admin Form ---- */
+.admin-form {
+  padding: 24px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
 /* ---- Admin Table ---- */
+
 .stats-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -683,5 +692,221 @@ tr:hover td {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* ======================================================
+   RESPONSIVE — MOBILE FIRST
+   ====================================================== */
+
+/* ---- Tablet y mobile (≤ 768px) ---- */
+@media (max-width: 768px) {
+  /* Navbar */
+  .navbar {
+    padding: 0 16px;
+    height: auto;
+    min-height: 64px;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .navbar-brand .brand-text {
+    font-size: 16px;
+  }
+
+  .navbar-actions {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .user-badge,
+  .admin-badge {
+    font-size: 12px;
+    padding: 5px 10px;
+  }
+
+  .btn-logout {
+    font-size: 12px;
+    padding: 6px 12px;
+  }
+
+  /* Contenido principal */
+  .main-content {
+    padding: 24px 16px;
+  }
+
+  .admin-content {
+    padding: 24px 16px;
+  }
+
+  /* Heading de página */
+  .page-heading h2 {
+    font-size: 22px;
+  }
+
+  .page-heading p {
+    font-size: 14px;
+  }
+
+  /* ---- Auth / Login ---- */
+  .auth-card {
+    padding: 32px 24px;
+  }
+
+  .auth-logo h1 {
+    font-size: 26px;
+  }
+
+  .auth-logo .pizza-icon {
+    font-size: 44px;
+  }
+
+  /* ---- Points Card ---- */
+  .points-card {
+    padding: 32px 20px;
+  }
+
+  .points-number {
+    font-size: 56px;
+  }
+
+  .points-divider {
+    font-size: 28px;
+  }
+
+  .points-total {
+    font-size: 28px;
+  }
+
+  .pizza-icon-item {
+    font-size: 22px;
+  }
+
+  /* ---- Redeem section ---- */
+  .redeem-section {
+    padding: 24px 16px;
+  }
+
+  .btn-redeem {
+    font-size: 15px;
+    padding: 16px 24px;
+  }
+
+  /* ---- Stats cards ---- */
+  .stats-cards {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .stat-number {
+    font-size: 32px;
+  }
+
+  /* ---- Formulario Admin (Nuevo Cliente) ---- */
+  .admin-form {
+    grid-template-columns: 1fr !important;
+    padding: 16px;
+  }
+
+  /* ---- Tabla ---- */
+  .table-header-row {
+    padding: 16px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .table-title {
+    font-size: 16px;
+  }
+
+  table {
+    font-size: 13px;
+  }
+
+  th,
+  td {
+    padding: 12px 14px;
+  }
+
+  /* Ocultar columnas menos importantes en mobile */
+  th:nth-child(3),
+  td:nth-child(3) {
+    display: none;
+  }
+
+  .user-email {
+    font-size: 11px;
+  }
+
+  /* ---- Botones de acción en la tabla ---- */
+  .action-buttons {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .btn-success,
+  .btn-danger,
+  .btn-ghost {
+    padding: 8px 10px;
+    font-size: 12px;
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  /* ---- Modal de edición ---- */
+  div[style*="position: fixed"][style*="translate(-50%"] {
+    width: calc(100vw - 32px) !important;
+    max-width: 100% !important;
+    padding: 28px 20px !important;
+  }
+}
+
+/* ---- Mobile chico (≤ 480px) ---- */
+@media (max-width: 480px) {
+  .navbar-brand .logo {
+    font-size: 22px;
+  }
+
+  .stats-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .points-number {
+    font-size: 48px;
+  }
+
+  .points-divider,
+  .points-total {
+    font-size: 24px;
+  }
+
+  .pizza-icon-item {
+    font-size: 20px;
+  }
+
+  .points-card {
+    padding: 24px 16px;
+  }
+
+  .auth-card {
+    padding: 28px 18px;
+  }
+
+  /* En mobile muy chico ocultar también contacto */
+  th:nth-child(2),
+  td:nth-child(2) {
+    display: none;
+  }
+
+  .btn {
+    font-size: 13px;
+  }
+
+  /* Botón de editar: solo el ícono en pantallas chicas */
+  .action-buttons .btn-ghost[style*="accent"] {
+    padding: 8px 10px;
   }
 }
