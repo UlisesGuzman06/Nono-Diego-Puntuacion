@@ -1,36 +1,81 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🍕 Nono Diego — Sistema de Puntos
 
-## Getting Started
+Sistema de fidelización de clientes para  **Nono Diego**. Los clientes acumulan puntos con cada pizza comprada y, al llegar a 10, canjean una pizza gratis.
 
-First, run the development server:
+---
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Stack tecnológico
+
+- **Next.js 14** (App Router, Server Components, Server Actions)
+- **TypeScript**
+- **Supabase** — autenticación y base de datos PostgreSQL
+- **CSS vanilla** — sin frameworks de estilos externos
+
+---
+
+## Funcionalidades
+
+### Clientes
+
+- Ver sus puntos actuales sobre la meta de 10
+- Visualización con íconos de pizza y barra de progreso
+- Canjear pizza gratis cuando alcanzan los 10 puntos (resetea a 0)
+
+### Administradores
+
+- Crear nuevos clientes (nombre, email, contraseña, teléfono, dirección)
+- Ver listado completo de clientes con sus puntos
+- Sumar o restar puntos individualmente
+- Resetear puntos de un cliente
+- Editar datos de un cliente (nombre, teléfono, dirección)
+
+---
+
+## Estructura de rutas
+
+```
+/login       → Inicio de sesión
+/usuario     → Panel del cliente
+/admin       → Panel de administración
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+La ruta raíz `/` redirige automáticamente según el rol del usuario autenticado.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Base de datos
 
-## Learn More
+### Tabla `profiles`
 
-To learn more about Next.js, take a look at the following resources:
+| Columna     | Tipo    | Descripción                   |
+| ----------- | ------- | ----------------------------- |
+| `id`        | uuid    | Referencia al usuario de auth |
+| `nombre`    | text    | Nombre del cliente            |
+| `email`     | text    | Email del cliente             |
+| `telefono`  | text    | Teléfono de contacto          |
+| `direccion` | text    | Dirección                     |
+| `puntos`    | integer | Puntos acumulados (0–10)      |
+| `rol`       | text    | `"admin"` o `"usuario"`       |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Funciones RPC
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `modificar_puntos(target_id, delta)` — suma o resta puntos
+- `resetear_puntos_usuario(target_id)` — lleva los puntos a 0
 
-## Deploy on Vercel
+### Edge Function
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `crear-usuario` — crea un nuevo usuario en Supabase Auth y su perfil en `profiles`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+
+## Variables de entorno
+
+Crear un archivo `.env.local` en la raíz del proyecto:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+```
+
+---
+
