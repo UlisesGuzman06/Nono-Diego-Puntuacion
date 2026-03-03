@@ -24,6 +24,11 @@ export function createClient() {
           }
         },
       },
+      // Deshabilitar caché de Next.js para que siempre lea datos frescos de la BD
+      global: {
+        fetch: (url: RequestInfo | URL, options: RequestInit = {}) =>
+          fetch(url, { ...options, cache: "no-store" }),
+      },
     },
   );
 }

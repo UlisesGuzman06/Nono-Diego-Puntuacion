@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 type Usuario = {
@@ -11,6 +12,8 @@ type Usuario = {
   direccion: string | null;
   puntos: number;
   rol: string;
+  periodo_inicio: string | null;
+  periodo_fin: Date | null;
 };
 
 type EditForm = {
@@ -19,7 +22,60 @@ type EditForm = {
   direccion: string;
 };
 
+type FiltroActivo = "todos" | "listos" | "activos" | "sinpuntos";
+
 const META = 10;
+
+/** Calcula si el período de 40 días está activo y cuántos días restan */
+function calcularPeriodo(periodo_inicio: string | null): {
+  activo: boolean;
+  fin: Date | null;
+  diasRestantes: number | null;
+} {
+  if (!periodo_inicio) return { activo: false, fin: null, diasRestantes: null };
+  const inicio = new Date(periodo_inicio);
+  const fin = new Date(inicio.getTime() + 40 * 24 * 60 * 60 * 1000);
+  const ahora = new Date();
+  if (ahora >= fin) return { activo: false, fin: null, diasRestantes: null };
+  const dias = Math.ceil(
+    (fin.getTime() - ahora.getTime()) / (1000 * 60 * 60 * 24),
+  );
+  return { activo: true, fin, diasRestantes: dias };
+}
+
+function PeriodoChip({ periodo_inicio }: { periodo_inicio: string | null }) {
+  const { activo, fin, diasRestantes } = calcularPeriodo(periodo_inicio);
+
+  if (!activo || !fin) {
+    return (
+      <span className="pa-chip pa-chip--none" title="Sin período activo">
+        Sin período
+      </span>
+    );
+  }
+
+  const fechaFin = fin.toLocaleDateString("es-AR", {
+    day: "numeric",
+    month: "short",
+  });
+
+  if (diasRestantes !== null && diasRestantes <= 5) {
+    return (
+      <span className="pa-chip pa-chip--warn" title={`Vence el ${fechaFin}`}>
+        ⏳ {diasRestantes}d – {fechaFin}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className="pa-chip pa-chip--ok"
+      title={`Período activo hasta ${fechaFin}`}
+    >
+      📅 Hasta {fechaFin}
+    </span>
+  );
+}
 
 export default function PuntosActions({
   usuarios: initialUsuarios,
@@ -29,7 +85,14 @@ export default function PuntosActions({
   const [usuarios, setUsuarios] = useState(initialUsuarios);
   const [isPending, startTransition] = useTransition();
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null); // ID en espera de confirmar borrado
+  const router = useRouter();
 
+  // Search & filter
+  const [searchQ, setSearchQ] = useState("");
+  const [filtro, setFiltro] = useState<FiltroActivo>("todos");
+
+  // Edit modal
   const [editingUser, setEditingUser] = useState<Usuario | null>(null);
   const [editForm, setEditForm] = useState<EditForm>({
     nombre: "",
@@ -42,6 +105,71 @@ export default function PuntosActions({
 
   const supabase = createClient();
 
+  // ──  Listen to global custom events from the server-rendered page ──
+  useEffect(() => {
+    function onSearch(e: Event) {
+      const { q } = (e as CustomEvent).detail;
+      setSearchQ(q ?? "");
+    }
+    function onFilter(e: Event) {
+      const { filter } = (e as CustomEvent).detail;
+      setFiltro((filter as FiltroActivo) ?? "todos");
+    }
+    document.addEventListener("adm-search", onSearch);
+    document.addEventListener("adm-filter", onFilter);
+    return () => {
+      document.removeEventListener("adm-search", onSearch);
+      document.removeEventListener("adm-filter", onFilter);
+    };
+  }, []);
+
+  // ── Computed filtered list ──
+  const usuariosFiltrados = useMemo(() => {
+    let lista = usuarios;
+
+    // Text search
+    const q = searchQ.trim().toLowerCase();
+    if (q) {
+      lista = lista.filter(
+        (u) =>
+          (u.nombre || "").toLowerCase().includes(q) ||
+          (u.email || "").toLowerCase().includes(q) ||
+          (u.telefono || "").toLowerCase().includes(q),
+      );
+    }
+
+    // Filter
+    switch (filtro) {
+      case "listos":
+        lista = lista.filter((u) => u.puntos >= META);
+        break;
+      case "activos":
+        lista = lista.filter((u) => calcularPeriodo(u.periodo_inicio).activo);
+        break;
+      case "sinpuntos":
+        lista = lista.filter((u) => u.puntos === 0);
+        break;
+      default:
+        break;
+    }
+
+    return lista;
+  }, [usuarios, searchQ, filtro]);
+
+  // Update count label
+  useEffect(() => {
+    const el = document.getElementById("adm-showing-count");
+    if (el) {
+      const total = usuarios.length;
+      const shown = usuariosFiltrados.length;
+      el.textContent =
+        shown === total
+          ? `Mostrando ${total} cliente${total !== 1 ? "s" : ""}`
+          : `Mostrando ${shown} de ${total} cliente${total !== 1 ? "s" : ""}`;
+    }
+  }, [usuariosFiltrados, usuarios.length]);
+
+  // ── Edit ──
   function abrirEdicion(usuario: Usuario) {
     setEditingUser(usuario);
     setEditForm({
@@ -97,19 +225,32 @@ export default function PuntosActions({
 
   async function handleModificar(userId: string, delta: number) {
     setLoadingId(userId);
+
+    // Optimistic update
     setUsuarios((prev) =>
-      prev.map((u) =>
-        u.id === userId
-          ? { ...u, puntos: Math.max(0, Math.min(META, u.puntos + delta)) }
-          : u,
-      ),
+      prev.map((u) => {
+        if (u.id !== userId) return u;
+        const { activo } = calcularPeriodo(u.periodo_inicio);
+        // Si sumamos y no hay período activo, iniciamos uno nuevo
+        const nuevoPeriodoInicio =
+          delta > 0 && !activo && !u.periodo_inicio
+            ? new Date().toISOString()
+            : u.periodo_inicio;
+        return {
+          ...u,
+          puntos: Math.max(0, Math.min(META, u.puntos + delta)),
+          periodo_inicio: nuevoPeriodoInicio,
+        };
+      }),
     );
+
     startTransition(async () => {
       const { error } = await supabase.rpc("modificar_puntos", {
         target_id: userId,
         delta,
       });
       if (error) {
+        // Revertir en caso de error
         setUsuarios((prev) =>
           prev.map((u) =>
             u.id === userId
@@ -117,16 +258,45 @@ export default function PuntosActions({
               : u,
           ),
         );
+      } else {
+        // Refrescar datos reales desde la BD para tener periodo_inicio correcto
+        const { data } = await supabase
+          .from("profiles")
+          .select("puntos, periodo_inicio")
+          .eq("id", userId)
+          .single();
+        if (data) {
+          setUsuarios((prev) =>
+            prev.map((u) =>
+              u.id === userId
+                ? {
+                    ...u,
+                    puntos: data.puntos,
+                    periodo_inicio: data.periodo_inicio,
+                  }
+                : u,
+            ),
+          );
+        }
       }
       setLoadingId(null);
     });
   }
 
   async function handleResetear(userId: string) {
-    if (!confirm("¿Resetear los puntos de este cliente a 0?")) return;
+    if (
+      !confirm(
+        "¿Resetear los puntos de este cliente a 0?\nEl período activo también se cancelará.",
+      )
+    )
+      return;
     setLoadingId(userId);
     setUsuarios((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, puntos: 0 } : u)),
+      prev.map((u) =>
+        u.id === userId
+          ? { ...u, puntos: 0, periodo_inicio: null, periodo_fin: null }
+          : u,
+      ),
     );
     startTransition(async () => {
       await supabase.rpc("resetear_puntos_usuario", { target_id: userId });
@@ -134,103 +304,232 @@ export default function PuntosActions({
     });
   }
 
+  // ── Ver como usuario ──
+  function handleVerUsuario(userId: string) {
+    router.push(`/admin/vista-usuario/${userId}`);
+  }
+
+  // ── Borrar cuenta ── (doble confirmación)
+  async function handleBorrar(userId: string, nombre: string | null) {
+    // Primer click: marcar como "pendiente de confirmar"
+    if (deletingId !== userId) {
+      setDeletingId(userId);
+      // Auto-cancelar después de 4 segundos si no confirma
+      setTimeout(
+        () => setDeletingId((prev) => (prev === userId ? null : prev)),
+        4000,
+      );
+      return;
+    }
+
+    // Segundo click: confirmar borrado
+    setDeletingId(null);
+    setLoadingId(userId);
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const userToken = session?.access_token ?? "";
+
+    const supabaseUrl =
+      process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      "https://uwvcabgrndthgcueutbw.supabase.co";
+    const anonKey =
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV3dmNhYmdybmR0aGdjdWV1dGJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0NDE1NjcsImV4cCI6MjA4ODAxNzU2N30.vg_2zlHxLomla0hMQR2s5CBw1cGkaS4jhWJX3hqlEo4";
+
+    try {
+      const res = await fetch(`${supabaseUrl}/functions/v1/borrar-usuario`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${anonKey}`,
+          "X-User-Token": userToken,
+        },
+        body: JSON.stringify({ userId }),
+      });
+
+      if (res.ok) {
+        setUsuarios((prev) => prev.filter((u) => u.id !== userId));
+      } else {
+        const err = await res
+          .json()
+          .catch(() => ({ error: "Error desconocido" }));
+        alert(`Error al borrar: ${err.error || "Error desconocido"}`);
+      }
+    } catch {
+      alert("Error de red al intentar borrar la cuenta. Verificá tu conexión.");
+    }
+    setLoadingId(null);
+  }
+
   if (usuarios.length === 0) {
     return (
       <div className="pa-empty">
-        No hay clientes registrados aún. Creá el primero arriba.
+        No hay clientes registrados aún. Creá el primero con el botón
+        &ldquo;Nuevo Usuario&rdquo;.
       </div>
     );
   }
 
   return (
     <>
-      {/* ── Cards (se usan en mobile y desktop) ── */}
-      <div className="pa-list">
-        {usuarios.map((u) => {
-          const isLoading = loadingId === u.id;
-          const listo = u.puntos >= META;
-          const pct = Math.min((u.puntos / META) * 100, 100);
-
-          return (
-            <div
-              key={u.id}
-              className={`pa-card ${isLoading ? "pa-card--loading" : ""}`}
-            >
-              {/* Columna izquierda: info */}
-              <div className="pa-info">
-                {/* Avatar inicial */}
-                <div className="pa-avatar">
-                  {(u.nombre || u.email || "?")[0].toUpperCase()}
-                </div>
-                <div>
-                  <div className="pa-nombre">{u.nombre || "Sin nombre"}</div>
-                  <div className="pa-email">{u.email}</div>
-                  {u.telefono && <div className="pa-tel">📞 {u.telefono}</div>}
-                </div>
-              </div>
-
-              {/* Barra de puntos */}
-              <div className="pa-puntos">
-                <div className="pa-puntos-header">
-                  <span className="pa-puntos-label">Puntos</span>
-                  <span
-                    className={`pa-puntos-valor ${listo ? "pa-puntos-valor--max" : ""}`}
-                  >
-                    {u.puntos} / {META}
-                  </span>
-                </div>
-                <div className="pa-bar-track">
-                  <div
-                    className={`pa-bar-fill ${listo ? "pa-bar-fill--max" : ""}`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                {listo && (
-                  <div className="pa-listo-badge">✅ Listo para canjear</div>
-                )}
-              </div>
-
-              {/* Acciones */}
-              <div className="pa-actions">
-                <button
-                  className="pa-btn pa-btn--add"
-                  onClick={() => handleModificar(u.id, 1)}
-                  disabled={isLoading || u.puntos >= META}
-                  title="Sumar punto"
-                >
-                  +1
-                </button>
-                <button
-                  className="pa-btn pa-btn--sub"
-                  onClick={() => handleModificar(u.id, -1)}
-                  disabled={isLoading || u.puntos === 0}
-                  title="Restar punto"
-                >
-                  −1
-                </button>
-                <button
-                  className="pa-btn pa-btn--reset"
-                  onClick={() => handleResetear(u.id)}
-                  disabled={isLoading || u.puntos === 0}
-                  title="Resetear puntos"
-                >
-                  ↺
-                </button>
-                <button
-                  className="pa-btn pa-btn--edit"
-                  onClick={() => abrirEdicion(u)}
-                  disabled={isLoading}
-                  title="Editar datos"
-                >
-                  ✏️
-                </button>
-              </div>
-            </div>
-          );
-        })}
+      {/* ── Search bar LOCAL (in-table, visible on mobile) ── */}
+      <div className="pa-search-mobile">
+        <svg
+          className="pa-search-icon-sm"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <input
+          type="text"
+          className="pa-search-input-sm"
+          placeholder="Buscar..."
+          value={searchQ}
+          onChange={(e) => setSearchQ(e.target.value)}
+        />
       </div>
 
-      {/* ── Modal de edición ── */}
+      {/* ── Table rows ── */}
+      {usuariosFiltrados.length === 0 ? (
+        <div className="pa-empty">
+          No se encontraron clientes que coincidan con &ldquo;{searchQ}&rdquo;.
+        </div>
+      ) : (
+        <div className="pa-list">
+          {usuariosFiltrados.map((u) => {
+            const isLoading = loadingId === u.id;
+            const listo = u.puntos >= META;
+            const pct = Math.min((u.puntos / META) * 100, 100);
+            const { activo: periodoActivo } = calcularPeriodo(u.periodo_inicio);
+
+            const inicial = (u.nombre || u.email || "?")[0].toUpperCase();
+
+            return (
+              <div
+                key={u.id}
+                className={`pa-row ${isLoading ? "pa-row--loading" : ""}`}
+              >
+                {/* NOMBRE */}
+                <div className="pa-cell pa-cell--nombre">
+                  <div className="pa-avatar">{inicial}</div>
+                  <div className="pa-info-text">
+                    <div className="pa-nombre">{u.nombre || "Sin nombre"}</div>
+                    {u.telefono && (
+                      <div className="pa-tel">📞 {u.telefono}</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* EMAIL */}
+                <div className="pa-cell pa-cell--email">
+                  <span className="pa-email">{u.email}</span>
+                </div>
+
+                {/* PUNTOS */}
+                <div className="pa-cell pa-cell--puntos">
+                  <div className="pa-puntos-wrapper">
+                    <span
+                      className={`pa-points-badge ${listo ? "pa-points-badge--max" : ""}`}
+                    >
+                      {u.puntos}
+                      <span className="pa-points-meta">/{META}</span>
+                    </span>
+                    <div className="pa-bar-track">
+                      <div
+                        className={`pa-bar-fill ${listo ? "pa-bar-fill--max" : ""}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* PERÍODO ACTIVO */}
+                <div className="pa-cell pa-cell--venc">
+                  <PeriodoChip periodo_inicio={u.periodo_inicio} />
+                </div>
+
+                {/* ACCIONES */}
+                <div className="pa-cell pa-cell--actions">
+                  <button
+                    className="pa-btn pa-btn--add"
+                    onClick={() => handleModificar(u.id, 1)}
+                    disabled={isLoading || u.puntos >= META}
+                    title="Sumar punto"
+                  >
+                    +1 Punto
+                  </button>
+                  <button
+                    className="pa-btn pa-btn--sub"
+                    onClick={() => handleModificar(u.id, -1)}
+                    disabled={isLoading || u.puntos === 0}
+                    title="Restar punto"
+                  >
+                    −1 Punto
+                  </button>
+                  <button
+                    className="pa-btn pa-btn--reset"
+                    onClick={() => handleResetear(u.id)}
+                    disabled={isLoading || (u.puntos === 0 && !periodoActivo)}
+                    title="Resetear puntos y período"
+                  >
+                    Resetear
+                  </button>
+                  <button
+                    className="pa-btn pa-btn--icon pa-btn--edit"
+                    onClick={() => abrirEdicion(u)}
+                    disabled={isLoading}
+                    title="Editar datos"
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    className="pa-btn pa-btn--icon pa-btn--view"
+                    onClick={() => handleVerUsuario(u.id)}
+                    disabled={isLoading}
+                    title="Ver panel del usuario"
+                  >
+                    👁️
+                  </button>
+                  <button
+                    className={`pa-btn pa-btn--icon ${
+                      deletingId === u.id
+                        ? "pa-btn--delete-confirm"
+                        : "pa-btn--delete"
+                    }`}
+                    onClick={() => handleBorrar(u.id, u.nombre)}
+                    disabled={isLoading}
+                    title={
+                      deletingId === u.id
+                        ? "⚠️ Clic de nuevo para CONFIRMAR el borrado"
+                        : "Borrar cuenta"
+                    }
+                  >
+                    {deletingId === u.id ? "⚠️" : "🗑️"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Pagination footer */}
+      <div className="pa-pagination">
+        <span className="pa-pag-info">
+          Mostrando 1–{usuariosFiltrados.length} de {usuarios.length} usuarios
+        </span>
+        <div className="pa-pag-pages">
+          <button className="pa-pag-btn pa-pag-btn--active">1</button>
+        </div>
+      </div>
+
+      {/* ── Edit modal ── */}
       {editingUser && (
         <>
           <div className="pa-overlay" onClick={cerrarEdicion} />
@@ -314,109 +613,95 @@ export default function PuntosActions({
         </>
       )}
 
-      {/* ── Estilos del componente ── */}
       <style>{`
-        /* Empty */
         .pa-empty {
-          padding: 48px;
+          padding: 56px 24px;
           text-align: center;
           color: var(--text-muted);
-          font-size: 15px;
+          font-size: 14px;
         }
 
-        /* Lista de tarjetas */
-        .pa-list {
-          display: flex;
-          flex-direction: column;
-          gap: 0;
+        /* Mobile search bar */
+        .pa-search-mobile {
+          display: none;
+          position: relative;
+          padding: 16px 24px;
+          border-bottom: 1px solid var(--border);
         }
+        .pa-search-icon-sm {
+          position: absolute;
+          left: 38px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 15px;
+          height: 15px;
+          color: var(--text-muted);
+          pointer-events: none;
+        }
+        .pa-search-input-sm {
+          width: 100%;
+          background: rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 50px;
+          padding: 10px 16px 10px 38px;
+          color: var(--text-primary);
+          font-family: inherit;
+          font-size: 14px;
+          outline: none;
+        }
+        .pa-search-input-sm:focus { border-color: var(--accent); }
 
-        /* Tarjeta individual */
-        .pa-card {
+        /* Rows */
+        .pa-list { display: flex; flex-direction: column; }
+
+        .pa-row {
           display: grid;
-          grid-template-columns: minmax(160px, 2fr) minmax(140px, 2fr) auto;
+          grid-template-columns: 2fr 2fr 1fr 1.5fr 1.5fr;
           align-items: center;
-          gap: 20px;
-          padding: 18px 24px;
+          gap: 16px;
+          padding: 14px 24px;
           border-bottom: 1px solid var(--border);
           transition: background 0.15s;
         }
-        .pa-card:last-child { border-bottom: none; }
-        .pa-card:hover { background: var(--bg-card-hover); }
-        .pa-card--loading { opacity: 0.6; pointer-events: none; }
+        .pa-row:last-child { border-bottom: none; }
+        .pa-row:hover { background: var(--bg-card-hover); }
+        .pa-row--loading { opacity: 0.55; pointer-events: none; }
 
-        /* Info del cliente */
-        .pa-info {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          min-width: 0;
-        }
+        .pa-cell { min-width: 0; }
+        .pa-cell--nombre { display: flex; align-items: center; gap: 10px; }
+
+        /* Avatar */
         .pa-avatar {
-          width: 40px;
-          height: 40px;
-          min-width: 40px;
+          width: 38px; height: 38px; min-width: 38px;
           border-radius: 50%;
-          background: var(--accent-light);
-          color: var(--accent);
-          font-size: 16px;
-          font-weight: 800;
-          display: flex;
-          align-items: center;
-          justify-content: center;
+          background: var(--accent-light); color: var(--accent);
+          font-size: 15px; font-weight: 800;
+          display: flex; align-items: center; justify-content: center;
           border: 1px solid var(--border-accent);
+          flex-shrink: 0;
         }
+        .pa-info-text { min-width: 0; }
         .pa-nombre {
-          font-weight: 600;
-          font-size: 14px;
-          color: var(--text-primary);
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
+          font-weight: 600; font-size: 14px; color: var(--text-primary);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .pa-email {
-          font-size: 12px;
-          color: var(--text-muted);
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
+          font-size: 12px; color: var(--text-muted);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          display: block;
         }
-        .pa-tel {
-          font-size: 11px;
-          color: var(--text-muted);
-          margin-top: 2px;
-        }
+        .pa-tel { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
 
-        /* Barra de puntos */
-        .pa-puntos {
-          min-width: 0;
+        /* Points */
+        .pa-puntos-wrapper { display: flex; flex-direction: column; gap: 5px; }
+        .pa-points-badge {
+          font-size: 15px; font-weight: 800; color: var(--accent);
         }
-        .pa-puntos-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 6px;
-        }
-        .pa-puntos-label {
-          font-size: 11px;
-          font-weight: 600;
-          color: var(--text-muted);
-          text-transform: uppercase;
-          letter-spacing: 0.8px;
-        }
-        .pa-puntos-valor {
-          font-size: 13px;
-          font-weight: 700;
-          color: var(--accent);
-        }
-        .pa-puntos-valor--max {
-          color: var(--success);
-        }
+        .pa-points-badge--max { color: var(--success); }
+        .pa-points-meta { font-size: 11px; color: var(--text-muted); font-weight: 500; }
         .pa-bar-track {
-          height: 6px;
-          background: var(--bg-secondary);
-          border-radius: 50px;
-          overflow: hidden;
+          height: 5px; background: var(--bg-secondary);
+          border-radius: 50px; overflow: hidden; width: 80px;
         }
         .pa-bar-fill {
           height: 100%;
@@ -424,166 +709,113 @@ export default function PuntosActions({
           border-radius: 50px;
           transition: width 0.5s cubic-bezier(0.4,0,0.2,1);
         }
-        .pa-bar-fill--max {
-          background: linear-gradient(90deg, #4caf7d, #3a9a68);
+        .pa-bar-fill--max { background: linear-gradient(90deg, #4caf7d, #3a9a68); }
+
+        /* Chips */
+        .pa-chip {
+          display: inline-block; font-size: 11px; font-weight: 600;
+          padding: 3px 9px; border-radius: 50px;
         }
-        .pa-listo-badge {
-          font-size: 11px;
-          color: var(--success);
-          font-weight: 600;
-          margin-top: 5px;
+        .pa-chip--ok      { background: var(--success-bg); color: var(--success); }
+        .pa-chip--warn    { background: rgba(240,165,0,0.15); color: var(--warning); }
+        .pa-chip--none    { background: var(--bg-secondary); color: var(--text-muted); }
+
+        /* Action buttons */
+        .pa-cell--actions { display: flex; gap: 5px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+        .pa-btn {
+          height: 30px;
+          padding: 0 10px;
+          border: 1px solid transparent;
+          border-radius: 50px;
+          font-size: 12px; font-weight: 700;
+          cursor: pointer; font-family: inherit;
+          transition: all 0.15s;
+          white-space: nowrap;
+          display: flex; align-items: center;
+        }
+        .pa-btn--icon { width: 30px; padding: 0; justify-content: center; font-size: 13px; border-radius: 8px; }
+        .pa-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none !important; }
+
+        .pa-btn--add   { background: var(--success-bg); color: var(--success); border-color: rgba(76,175,125,0.3); }
+        .pa-btn--add:hover:not(:disabled)   { background: var(--success); color: white; }
+        .pa-btn--sub   { background: var(--danger-bg); color: var(--danger); border-color: rgba(224,92,92,0.3); }
+        .pa-btn--sub:hover:not(:disabled)   { background: var(--danger); color: white; }
+        .pa-btn--reset { background: var(--bg-secondary); color: var(--text-muted); border-color: var(--border); }
+        .pa-btn--reset:hover:not(:disabled) { color: var(--text-primary); border-color: var(--text-muted); }
+        .pa-btn--edit  { background: var(--accent-light); color: var(--accent); border-color: var(--border-accent); }
+        .pa-btn--edit:hover:not(:disabled)  { background: var(--accent); color: white; }
+        .pa-btn--view  { background: rgba(59,130,246,0.12); color: rgb(147,197,253); border-color: rgba(59,130,246,0.3); }
+        .pa-btn--view:hover:not(:disabled)  { background: rgba(59,130,246,0.8); color: white; }
+        .pa-btn--delete { background: var(--danger-bg); color: var(--danger); border-color: rgba(224,92,92,0.3); }
+        .pa-btn--delete:hover:not(:disabled) { background: var(--danger); color: white; }
+        .pa-btn--delete-confirm {
+          background: var(--danger); color: white; border-color: var(--danger);
+          animation: confirmPulse 0.6s ease infinite;
+        }
+        @keyframes confirmPulse {
+          0%,100% { box-shadow: 0 0 0 0 rgba(224,92,92,0.5); }
+          50%      { box-shadow: 0 0 0 5px rgba(224,92,92,0); }
         }
 
-        /* Botones de acción */
-        .pa-actions {
-          display: flex;
-          gap: 6px;
-          align-items: center;
-          justify-content: flex-end;
-        }
-        .pa-btn {
-          width: 36px;
-          height: 36px;
-          border: none;
-          border-radius: 8px;
-          font-size: 14px;
-          font-weight: 700;
-          cursor: pointer;
-          font-family: inherit;
-          transition: all 0.15s;
+        /* Pagination */
+        .pa-pagination {
           display: flex;
           align-items: center;
-          justify-content: center;
+          justify-content: space-between;
+          padding: 16px 24px;
+          border-top: 1px solid var(--border);
         }
-        .pa-btn:disabled {
-          opacity: 0.3;
-          cursor: not-allowed;
-          transform: none !important;
-        }
-        .pa-btn--add {
-          background: var(--success-bg);
-          color: var(--success);
-          border: 1px solid rgba(76,175,125,0.3);
-        }
-        .pa-btn--add:hover:not(:disabled) {
-          background: var(--success);
-          color: white;
-          transform: scale(1.08);
-        }
-        .pa-btn--sub {
-          background: var(--danger-bg);
-          color: var(--danger);
-          border: 1px solid rgba(224,92,92,0.3);
-        }
-        .pa-btn--sub:hover:not(:disabled) {
-          background: var(--danger);
-          color: white;
-          transform: scale(1.08);
-        }
-        .pa-btn--reset {
-          background: var(--bg-secondary);
-          color: var(--text-muted);
+        .pa-pag-info { font-size: 12px; color: var(--text-muted); }
+        .pa-pag-pages { display: flex; gap: 6px; }
+        .pa-pag-btn {
+          width: 32px; height: 32px;
           border: 1px solid var(--border);
-          font-size: 16px;
+          border-radius: 8px;
+          background: none;
+          color: var(--text-muted);
+          font-size: 13px; font-weight: 600;
+          cursor: pointer; font-family: inherit;
+          transition: all 0.15s;
         }
-        .pa-btn--reset:hover:not(:disabled) {
-          color: var(--text-primary);
-          border-color: var(--text-muted);
-          transform: rotate(-30deg) scale(1.05);
+        .pa-pag-btn--active {
+          background: var(--accent); border-color: var(--accent); color: white;
         }
-        .pa-btn--edit {
-          background: var(--accent-light);
-          color: var(--accent);
-          border: 1px solid var(--border-accent);
-          font-size: 13px;
-        }
-        .pa-btn--edit:hover:not(:disabled) {
-          background: var(--accent);
-          color: white;
-          transform: scale(1.08);
-        }
+        .pa-pag-btn:hover:not(.pa-pag-btn--active) { background: var(--bg-card-hover); color: var(--text-primary); }
 
         /* Modal */
-        .pa-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0,0,0,0.65);
-          backdrop-filter: blur(4px);
-          z-index: 200;
-          animation: paFadeIn 0.2s ease;
-        }
+        .pa-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.65); backdrop-filter:blur(4px); z-index:200; animation:paFadeIn 0.2s ease; }
         .pa-modal {
-          position: fixed;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          z-index: 201;
-          background: var(--bg-card);
-          border: 1px solid var(--border-accent);
-          border-radius: var(--radius-lg);
-          padding: 36px;
-          width: calc(100% - 32px);
-          max-width: 460px;
-          box-shadow: 0 24px 64px rgba(0,0,0,0.6);
-          animation: paSlideUp 0.22s ease;
+          position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+          z-index:201; background:var(--bg-card);
+          border:1px solid var(--border-accent); border-radius:var(--radius-lg);
+          padding:36px; width:calc(100% - 32px); max-width:460px;
+          box-shadow:0 24px 64px rgba(0,0,0,0.6); animation:paSlideUp 0.22s ease;
         }
-        .pa-modal-header {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          margin-bottom: 24px;
-        }
-        .pa-modal-title {
-          font-size: 18px;
-          font-weight: 700;
-          color: var(--text-primary);
-        }
-        .pa-modal-sub {
-          font-size: 13px;
-          color: var(--text-muted);
-          margin-top: 3px;
-        }
-        .pa-modal-close {
-          background: none;
-          border: none;
-          color: var(--text-muted);
-          font-size: 24px;
-          cursor: pointer;
-          line-height: 1;
-          padding: 0 4px;
-          transition: color 0.15s;
-          border-radius: 6px;
-        }
-        .pa-modal-close:hover { color: var(--text-primary); }
-        .pa-modal-actions {
-          display: flex;
-          gap: 12px;
-          margin-top: 8px;
-        }
+        .pa-modal-header { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:24px; }
+        .pa-modal-title  { font-size:18px; font-weight:700; color:var(--text-primary); }
+        .pa-modal-sub    { font-size:13px; color:var(--text-muted); margin-top:3px; }
+        .pa-modal-close  { background:none; border:none; color:var(--text-muted); font-size:24px; cursor:pointer; line-height:1; padding:0 4px; transition:color 0.15s; border-radius:6px; }
+        .pa-modal-close:hover { color:var(--text-primary); }
+        .pa-modal-actions { display:flex; gap:12px; margin-top:8px; }
+        @keyframes paFadeIn  { from{opacity:0} to{opacity:1} }
+        @keyframes paSlideUp { from{opacity:0;transform:translate(-50%,-46%)} to{opacity:1;transform:translate(-50%,-50%)} }
 
-        /* Animaciones */
-        @keyframes paFadeIn {
-          from { opacity: 0; }
-          to   { opacity: 1; }
+        /* Responsive */
+        @media (max-width: 1024px) {
+          .pa-row { grid-template-columns: 2fr 2fr 1fr auto; }
+          .pa-cell--venc { display: none; }
         }
-        @keyframes paSlideUp {
-          from { opacity: 0; transform: translate(-50%, -46%); }
-          to   { opacity: 1; transform: translate(-50%, -50%); }
-        }
-
-        /* ── Responsive ── */
-        @media (max-width: 640px) {
-          .pa-card {
-            grid-template-columns: 1fr;
-            gap: 14px;
-            padding: 16px;
+        @media (max-width: 768px) {
+          .pa-search-mobile { display: block; }
+          .pa-row {
+            grid-template-columns: 1fr auto;
+            gap: 10px;
+            padding: 14px 16px;
           }
-          .pa-actions {
-            justify-content: flex-start;
-          }
-          .pa-modal {
-            padding: 24px 18px;
-          }
+          .pa-cell--email { display: none; }
+          .pa-cell--puntos { display: none; }
+          .pa-cell--venc { display: none; }
+          .pa-modal { padding: 24px 18px; }
         }
       `}</style>
     </>

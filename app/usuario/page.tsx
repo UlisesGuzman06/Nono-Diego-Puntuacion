@@ -16,7 +16,7 @@ async function canjearPizza() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("puntos")
+    .select("puntos, periodo_inicio")
     .eq("id", user.id)
     .single();
 
@@ -24,7 +24,25 @@ async function canjearPizza() {
     return;
   }
 
-  await supabase.from("profiles").update({ puntos: 0 }).eq("id", user.id);
+  // Verificar que el período sigue activo (no hayan pasado 40 días)
+  if (profile.periodo_inicio) {
+    const inicio = new Date(profile.periodo_inicio);
+    const fin = new Date(inicio.getTime() + 40 * 24 * 60 * 60 * 1000);
+    if (new Date() >= fin) {
+      // El período de 40 días expiró: resetear y no permitir canjear
+      await supabase
+        .from("profiles")
+        .update({ puntos: 0, periodo_inicio: null })
+        .eq("id", user.id);
+      revalidatePath("/usuario");
+      return;
+    }
+  }
+
+  await supabase
+    .from("profiles")
+    .update({ puntos: 0, periodo_inicio: null })
+    .eq("id", user.id);
 
   revalidatePath("/usuario");
 }
@@ -53,10 +71,42 @@ export default async function UsuarioPage() {
 
   if (!profile) redirect("/login");
 
-  const puntos = profile.puntos ?? 0;
+  const ahora = new Date();
+
+  // ── Lógica de período de 40 días desde primera compra ──
+  let puntos = profile.puntos ?? 0;
+  let periodoInicio: Date | null = null;
+  let periodoFin: Date | null = null;
+  let periodoActivo = false;
+  let diasRestantes: number | null = null;
+  let proximaAVencer = false;
+
+  if (profile.periodo_inicio) {
+    periodoInicio = new Date(profile.periodo_inicio);
+    periodoFin = new Date(periodoInicio.getTime() + 40 * 24 * 60 * 60 * 1000);
+
+    if (ahora >= periodoFin) {
+      // El período expiró: mostrar 0 puntos (se resetean la próxima interacción)
+      puntos = 0;
+      periodoActivo = false;
+    } else {
+      periodoActivo = true;
+      diasRestantes = Math.ceil(
+        (periodoFin.getTime() - ahora.getTime()) / (1000 * 60 * 60 * 24),
+      );
+      proximaAVencer = diasRestantes <= 5;
+    }
+  }
+
   const META = 10;
   const porcentaje = Math.min((puntos / META) * 100, 100);
-  const puedeCanjar = puntos >= META;
+  const puedeCanjar = puntos >= META && periodoActivo;
+
+  const formatFecha = (d: Date) =>
+    d.toLocaleDateString("es-AR", {
+      day: "numeric",
+      month: "long",
+    });
 
   return (
     <div className="dashboard">
@@ -86,6 +136,53 @@ export default async function UsuarioPage() {
           <h2>¡Hola, {profile.nombre || "Cliente"}! 👋</h2>
           <p>Acumulá puntos con cada pizza y ganá una gratis.</p>
         </div>
+
+        {/* Banner: período próximo a vencer (≤ 5 días) */}
+        {periodoActivo && proximaAVencer && periodoFin && (
+          <div
+            style={{
+              background: "rgba(240,165,0,0.12)",
+              border: "1px solid rgba(240,165,0,0.35)",
+              borderRadius: "var(--radius)",
+              padding: "14px 18px",
+              marginBottom: 24,
+              color: "var(--warning)",
+              fontSize: 14,
+              fontWeight: 500,
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+            }}
+          >
+            ⏳ Tu período de puntos vence en{" "}
+            <strong>
+              {diasRestantes} día{diasRestantes !== 1 ? "s" : ""}
+            </strong>{" "}
+            ({formatFecha(periodoFin)}). ¡Seguí comprando para aprovecharlos!
+          </div>
+        )}
+
+        {/* Banner: período expirado y puntos reseteados */}
+        {!periodoActivo && profile.periodo_inicio && (
+          <div
+            style={{
+              background: "rgba(59,130,246,0.08)",
+              border: "1px solid rgba(59,130,246,0.25)",
+              borderRadius: "var(--radius)",
+              padding: "14px 18px",
+              marginBottom: 24,
+              color: "rgba(147,197,253,0.9)",
+              fontSize: 14,
+              fontWeight: 500,
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+            }}
+          >
+            🔄 Tu período anterior de puntos venció. ¡Tu próxima compra iniciará
+            un nuevo período de 40 días!
+          </div>
+        )}
 
         {/* Points Display */}
         <div className="points-card">
@@ -126,6 +223,69 @@ export default async function UsuarioPage() {
               </span>
             </div>
           </div>
+
+          {/* Información del período activo */}
+          {periodoActivo && periodoInicio && periodoFin && (
+            <div
+              style={{
+                marginTop: 16,
+                padding: "10px 16px",
+                background: "rgba(255,255,255,0.04)",
+                borderRadius: "var(--radius)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                fontSize: 12,
+                color: "var(--text-muted)",
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
+              <span>
+                📅 Período:{" "}
+                <strong style={{ color: "var(--text-secondary)" }}>
+                  {formatFecha(periodoInicio)}
+                </strong>
+              </span>
+              <span>
+                Vence:{" "}
+                <strong
+                  style={{
+                    color:
+                      diasRestantes && diasRestantes <= 5
+                        ? "var(--warning)"
+                        : "var(--text-secondary)",
+                  }}
+                >
+                  {formatFecha(periodoFin)}
+                </strong>
+              </span>
+              <span>
+                Quedan:{" "}
+                <strong style={{ color: "var(--accent)" }}>
+                  {diasRestantes} día{diasRestantes !== 1 ? "s" : ""}
+                </strong>
+              </span>
+            </div>
+          )}
+
+          {/* Sin período activo */}
+          {!periodoActivo && (
+            <div
+              style={{
+                marginTop: 16,
+                padding: "10px 16px",
+                background: "rgba(255,255,255,0.03)",
+                borderRadius: "var(--radius)",
+                border: "1px solid rgba(255,255,255,0.06)",
+                fontSize: 12,
+                color: "var(--text-muted)",
+                textAlign: "center",
+              }}
+            >
+              Tu próxima compra iniciará un nuevo período de 40 días
+            </div>
+          )}
         </div>
 
         {/* Redeem Section */}
@@ -141,8 +301,9 @@ export default async function UsuarioPage() {
             <>
               <div className="redeem-title">Pizza Gratis</div>
               <div className="redeem-subtitle">
-                Necesitás {META - puntos} punto{META - puntos !== 1 ? "s" : ""}{" "}
-                más para canjear tu pizza gratis.
+                {periodoActivo
+                  ? `Necesitás ${META - puntos} punto${META - puntos !== 1 ? "s" : ""} más para canjear tu pizza gratis.`
+                  : "Realizá tu próxima compra para iniciar un nuevo período de puntos."}
               </div>
             </>
           )}
@@ -155,7 +316,9 @@ export default async function UsuarioPage() {
             >
               {puedeCanjar
                 ? "🍕 Canjear Pizza Gratis"
-                : `Faltan ${META - puntos} puntos`}
+                : periodoActivo
+                  ? `Faltan ${META - puntos} puntos`
+                  : "Sin período activo"}
             </button>
           </form>
         </div>
