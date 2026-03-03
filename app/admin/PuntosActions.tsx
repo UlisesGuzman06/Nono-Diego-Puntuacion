@@ -494,6 +494,11 @@ export default function PuntosActions({
                   </div>
                 </div>
 
+                {/* EMAIL (Desktop) */}
+                <div className="pa-cell pa-cell--email">
+                  <span className="pa-email">{u.email}</span>
+                </div>
+
                 {/* PUNTOS + PERÍODO (agrupados en mobile) */}
                 <div className="pa-mobile-row2">
                   <div className="pa-cell pa-cell--puntos">
@@ -1017,8 +1022,9 @@ export default function PuntosActions({
             gap: 10px;
           }
 
-          /* Email visible en mobile dentro del bloque nombre */
+          /* Email visible en mobile dentro del bloque nombre, pero ocultamos la columna dedicada */
           .pa-info-text .pa-email { display: block; }
+          .pa-cell--email { display: none; }
 
           /* Fila 2: puntos + período en la misma línea */
           .pa-mobile-row2 {
