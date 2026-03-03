@@ -1,59 +1,11 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { revalidatePath } from "next/cache";
 import PuntosActions from "./PuntosActions";
+import { revalidatePath } from "next/cache";
 
 export const dynamic = "force-dynamic";
 
 // ── Server Actions ─────────────────────────────────────────────────────────────
-
-async function crearUsuario(formData: FormData) {
-  "use server";
-
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { data: adminProfile } = await supabase
-    .from("profiles")
-    .select("rol")
-    .eq("id", user.id)
-    .single();
-  if (adminProfile?.rol !== "admin") redirect("/usuario");
-
-  const nombre = formData.get("nombre") as string;
-  const email = formData.get("email") as string;
-  const password = formData.get("password") as string;
-  const telefono = formData.get("telefono") as string;
-  const direccion = formData.get("direccion") as string;
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const userToken = session?.access_token ?? "";
-
-  const res = await fetch(
-    `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/crear-usuario`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
-        "X-User-Token": userToken,
-      },
-      body: JSON.stringify({ nombre, email, password, telefono, direccion }),
-    },
-  );
-
-  if (!res.ok) {
-    const err = await res.json();
-    console.error("Error creando usuario:", err);
-  }
-
-  revalidatePath("/admin");
-}
 
 async function logout() {
   "use server";
@@ -280,7 +232,7 @@ export default async function AdminPage() {
                 </div>
               </div>
 
-              {/* Modal trigger */}
+              {/* Modal trigger - dispara evento que PuntosActions escucha */}
               <button className="adm-new-btn" id="adm-open-modal">
                 <svg
                   viewBox="0 0 24 24"
@@ -322,110 +274,15 @@ export default async function AdminPage() {
         </div>
       </main>
 
-      {/* ── Modal Nuevo Usuario ── */}
-      <div className="adm-modal-overlay" id="adm-modal-overlay">
-        <div className="adm-modal-box" id="adm-modal-box">
-          <div className="adm-modal-header">
-            <div>
-              <h3 className="adm-modal-title">Nuevo Cliente</h3>
-              <p className="adm-modal-sub">
-                Completá los datos para crear la cuenta
-              </p>
-            </div>
-            <button className="adm-modal-close" id="adm-close-modal">
-              ×
-            </button>
-          </div>
-          <form action={crearUsuario} className="adm-form" id="adm-create-form">
-            <div className="form-group" style={{ margin: 0 }}>
-              <label htmlFor="nombre">Nombre *</label>
-              <input
-                id="nombre"
-                name="nombre"
-                type="text"
-                placeholder="Ej: Juan García"
-                required
-              />
-            </div>
-            <div className="form-group" style={{ margin: 0 }}>
-              <label htmlFor="email">Email *</label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                placeholder="juan@email.com"
-                required
-              />
-            </div>
-            <div className="form-group" style={{ margin: 0 }}>
-              <label htmlFor="password">Contraseña *</label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                placeholder="Mínimo 6 caracteres"
-                required
-                minLength={6}
-              />
-            </div>
-            <div className="form-group" style={{ margin: 0 }}>
-              <label htmlFor="telefono">Teléfono</label>
-              <input
-                id="telefono"
-                name="telefono"
-                type="tel"
-                placeholder="Ej: +54 11 1234-5678"
-              />
-            </div>
-            <div
-              className="form-group"
-              style={{ margin: 0, gridColumn: "1 / -1" }}
-            >
-              <label htmlFor="direccion">Dirección</label>
-              <input
-                id="direccion"
-                name="direccion"
-                type="text"
-                placeholder="Ej: Av. Corrientes 1234, CABA"
-              />
-            </div>
-            <div style={{ gridColumn: "1 / -1", display: "flex", gap: 12 }}>
-              <button
-                type="submit"
-                className="btn btn-primary"
-                style={{ flex: 1 }}
-              >
-                Crear Cliente
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                id="adm-cancel-modal"
-                style={{ flex: 1 }}
-              >
-                Cancelar
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-
-      {/* Inline script para el modal, búsqueda y filtro */}
       <script
         dangerouslySetInnerHTML={{
           __html: `
         (function(){
-          // Modal
-          var overlay = document.getElementById('adm-modal-overlay');
+          // Boton Nuevo Usuario -> dispara evento para PuntosActions
           var openBtn = document.getElementById('adm-open-modal');
-          var closeBtn = document.getElementById('adm-close-modal');
-          var cancelBtn = document.getElementById('adm-cancel-modal');
-          function openModal(){ overlay.classList.add('adm-modal-overlay--visible'); }
-          function closeModal(){ overlay.classList.remove('adm-modal-overlay--visible'); }
-          if(openBtn) openBtn.addEventListener('click', openModal);
-          if(closeBtn) closeBtn.addEventListener('click', closeModal);
-          if(cancelBtn) cancelBtn.addEventListener('click', closeModal);
-          if(overlay) overlay.addEventListener('click', function(e){ if(e.target===overlay) closeModal(); });
+          if(openBtn) openBtn.addEventListener('click', function(){
+            document.dispatchEvent(new CustomEvent('adm-open-crear'));
+          });
 
           // Filtro dropdown
           var filterTrigger = document.getElementById('adm-filter-trigger');
@@ -445,7 +302,6 @@ export default async function AdminPage() {
               document.querySelectorAll('.adm-filter-option').forEach(function(el){ el.classList.remove('adm-filter-option--active'); });
               opt.classList.add('adm-filter-option--active');
               filterDropdown.classList.remove('adm-filter-dropdown--open');
-              // Dispatch custom event for PuntosActions
               document.dispatchEvent(new CustomEvent('adm-filter', { detail: { filter: val } }));
             });
           }
@@ -858,10 +714,18 @@ export default async function AdminPage() {
           .adm-navbar { padding: 0 16px; flex-wrap: wrap; height: auto; padding-top: 12px; padding-bottom: 12px; gap: 10px; }
           .adm-search-wrapper { order: 3; flex: unset; width: 100%; max-width: 100%; }
           .adm-stats { grid-template-columns: 1fr 1fr; }
-          .adm-content { padding: 24px 16px; }
+          .adm-content { padding: 20px 12px; }
           .adm-table-head { display: none; }
           .adm-form { grid-template-columns: 1fr; }
           .adm-modal-box { padding: 24px 18px; }
+          .adm-table-header {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 16px;
+          }
+          .adm-table-actions { width: 100%; }
+          .adm-filter-btn, .adm-new-btn { flex: 1; justify-content: center; }
         }
         @media(max-width: 480px) {
           .adm-stats { grid-template-columns: 1fr; }

@@ -3,6 +3,7 @@
 import { useState, useTransition, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { crearUsuarioAction } from "./actions";
 
 type Usuario = {
   id: string;
@@ -103,6 +104,18 @@ export default function PuntosActions({
   const [editError, setEditError] = useState<string | null>(null);
   const [editSuccess, setEditSuccess] = useState(false);
 
+  // ── Create Modal ──
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    nombre: "",
+    email: "",
+    password: "",
+    telefono: "",
+    direccion: "",
+  });
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
   const supabase = createClient();
 
   // ──  Listen to global custom events from the server-rendered page ──
@@ -115,11 +128,24 @@ export default function PuntosActions({
       const { filter } = (e as CustomEvent).detail;
       setFiltro((filter as FiltroActivo) ?? "todos");
     }
+    function onOpenCrear() {
+      setCreateError(null);
+      setCreateForm({
+        nombre: "",
+        email: "",
+        password: "",
+        telefono: "",
+        direccion: "",
+      });
+      setCreateModalOpen(true);
+    }
     document.addEventListener("adm-search", onSearch);
     document.addEventListener("adm-filter", onFilter);
+    document.addEventListener("adm-open-crear", onOpenCrear);
     return () => {
       document.removeEventListener("adm-search", onSearch);
       document.removeEventListener("adm-filter", onFilter);
+      document.removeEventListener("adm-open-crear", onOpenCrear);
     };
   }, []);
 
@@ -309,6 +335,47 @@ export default function PuntosActions({
     router.push(`/admin/vista-usuario/${userId}`);
   }
 
+  // ── Crear cuenta ──
+  async function handleCrearSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setCreateError(null);
+    setCreateLoading(true);
+
+    try {
+      const res = await crearUsuarioAction({
+        nombre: createForm.nombre,
+        email: createForm.email,
+        password: createForm.password,
+        telefono: createForm.telefono,
+        direccion: createForm.direccion,
+      });
+
+      if (res.error) {
+        setCreateError(res.error);
+      } else if (res.data) {
+        // Agregar el usuario a la lista inmediatamente
+        setUsuarios([
+          {
+            id: res.data.userId,
+            nombre: createForm.nombre,
+            email: createForm.email,
+            telefono: createForm.telefono || null,
+            direccion: createForm.direccion || null,
+            puntos: 0,
+            rol: "usuario",
+            periodo_inicio: null,
+            periodo_fin: null,
+          },
+          ...usuarios,
+        ]);
+        setCreateModalOpen(false);
+      }
+    } catch {
+      setCreateError("Error de red. Verificá tu conexión.");
+    }
+    setCreateLoading(false);
+  }
+
   // ── Borrar cuenta ── (doble confirmación)
   async function handleBorrar(userId: string, nombre: string | null) {
     // Primer click: marcar como "pendiente de confirmar"
@@ -415,43 +482,39 @@ export default function PuntosActions({
                 key={u.id}
                 className={`pa-row ${isLoading ? "pa-row--loading" : ""}`}
               >
-                {/* NOMBRE */}
+                {/* NOMBRE + email móvil */}
                 <div className="pa-cell pa-cell--nombre">
                   <div className="pa-avatar">{inicial}</div>
                   <div className="pa-info-text">
                     <div className="pa-nombre">{u.nombre || "Sin nombre"}</div>
+                    <div className="pa-email">{u.email}</div>
                     {u.telefono && (
                       <div className="pa-tel">📞 {u.telefono}</div>
                     )}
                   </div>
                 </div>
 
-                {/* EMAIL */}
-                <div className="pa-cell pa-cell--email">
-                  <span className="pa-email">{u.email}</span>
-                </div>
-
-                {/* PUNTOS */}
-                <div className="pa-cell pa-cell--puntos">
-                  <div className="pa-puntos-wrapper">
-                    <span
-                      className={`pa-points-badge ${listo ? "pa-points-badge--max" : ""}`}
-                    >
-                      {u.puntos}
-                      <span className="pa-points-meta">/{META}</span>
-                    </span>
-                    <div className="pa-bar-track">
-                      <div
-                        className={`pa-bar-fill ${listo ? "pa-bar-fill--max" : ""}`}
-                        style={{ width: `${pct}%` }}
-                      />
+                {/* PUNTOS + PERÍODO (agrupados en mobile) */}
+                <div className="pa-mobile-row2">
+                  <div className="pa-cell pa-cell--puntos">
+                    <div className="pa-puntos-wrapper">
+                      <span
+                        className={`pa-points-badge ${listo ? "pa-points-badge--max" : ""}`}
+                      >
+                        {u.puntos}
+                        <span className="pa-points-meta">/{META}</span>
+                      </span>
+                      <div className="pa-bar-track">
+                        <div
+                          className={`pa-bar-fill ${listo ? "pa-bar-fill--max" : ""}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-
-                {/* PERÍODO ACTIVO */}
-                <div className="pa-cell pa-cell--venc">
-                  <PeriodoChip periodo_inicio={u.periodo_inicio} />
+                  <div className="pa-cell pa-cell--venc">
+                    <PeriodoChip periodo_inicio={u.periodo_inicio} />
+                  </div>
                 </div>
 
                 {/* ACCIONES */}
@@ -528,6 +591,127 @@ export default function PuntosActions({
           <button className="pa-pag-btn pa-pag-btn--active">1</button>
         </div>
       </div>
+
+      {/* ── Modal Nuevo Usuario ── */}
+      {createModalOpen && (
+        <>
+          <div
+            className="pa-overlay"
+            onClick={() => setCreateModalOpen(false)}
+          />
+          <div
+            className="pa-modal"
+            style={{ maxHeight: "90vh", overflowY: "auto" }}
+          >
+            <div className="pa-modal-header">
+              <div>
+                <h3 className="pa-modal-title">Nuevo Cliente</h3>
+                <p className="pa-modal-sub">
+                  Completá los datos para crear la cuenta
+                </p>
+              </div>
+              <button
+                type="button"
+                className="pa-modal-close"
+                onClick={() => setCreateModalOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            {createError && (
+              <div className="error-msg" style={{ marginBottom: 16 }}>
+                {createError}
+              </div>
+            )}
+
+            <form onSubmit={handleCrearSubmit}>
+              <div className="form-group">
+                <label>Nombre *</label>
+                <input
+                  type="text"
+                  placeholder="Ej: Juan García"
+                  required
+                  value={createForm.nombre}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({ ...f, nombre: e.target.value }))
+                  }
+                  disabled={createLoading}
+                />
+              </div>
+              <div className="form-group">
+                <label>Email *</label>
+                <input
+                  type="email"
+                  placeholder="juan@email.com"
+                  required
+                  value={createForm.email}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({ ...f, email: e.target.value }))
+                  }
+                  disabled={createLoading}
+                />
+              </div>
+              <div className="form-group">
+                <label>Contraseña *</label>
+                <input
+                  type="password"
+                  placeholder="Mínimo 6 caracteres"
+                  minLength={6}
+                  required
+                  value={createForm.password}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({ ...f, password: e.target.value }))
+                  }
+                  disabled={createLoading}
+                />
+              </div>
+              <div className="form-group">
+                <label>Teléfono</label>
+                <input
+                  type="tel"
+                  placeholder="Ej: +54 11 1234-5678"
+                  value={createForm.telefono}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({ ...f, telefono: e.target.value }))
+                  }
+                  disabled={createLoading}
+                />
+              </div>
+              <div className="form-group">
+                <label>Dirección</label>
+                <input
+                  type="text"
+                  placeholder="Ej: Av. Corrientes 1234, CABA"
+                  value={createForm.direccion}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({ ...f, direccion: e.target.value }))
+                  }
+                  disabled={createLoading}
+                />
+              </div>
+              <div className="pa-modal-actions" style={{ marginTop: 20 }}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  style={{ flex: 1 }}
+                  disabled={createLoading}
+                >
+                  {createLoading ? "Creando..." : "Crear Cliente"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ flex: 1 }}
+                  onClick={() => setCreateModalOpen(false)}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </>
+      )}
 
       {/* ── Edit modal ── */}
       {editingUser && (
@@ -670,6 +854,12 @@ export default function PuntosActions({
         .pa-cell { min-width: 0; }
         .pa-cell--nombre { display: flex; align-items: center; gap: 10px; }
 
+        /* En desktop el email dentro del bloque nombre está oculto (va en su propia columna) */
+        .pa-info-text .pa-email { display: none; }
+
+        /* En desktop pa-mobile-row2 actúa como contenedor transparente (sus hijos son celdas del grid) */
+        .pa-mobile-row2 { display: contents; }
+
         /* Avatar */
         .pa-avatar {
           width: 38px; height: 38px; min-width: 38px;
@@ -805,17 +995,67 @@ export default function PuntosActions({
           .pa-row { grid-template-columns: 2fr 2fr 1fr auto; }
           .pa-cell--venc { display: none; }
         }
+
+        /* ── Mobile: layout de tarjeta ── */
         @media (max-width: 768px) {
           .pa-search-mobile { display: block; }
+
+          /* Cada fila pasa a ser una tarjeta vertical */
           .pa-row {
-            grid-template-columns: 1fr auto;
+            display: flex;
+            flex-direction: column;
             gap: 10px;
-            padding: 14px 16px;
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+            border-radius: 0;
           }
-          .pa-cell--email { display: none; }
-          .pa-cell--puntos { display: none; }
-          .pa-cell--venc { display: none; }
+
+          /* Fila 1: avatar + nombre + email (siempre visible) */
+          .pa-cell--nombre {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+          }
+
+          /* Email visible en mobile dentro del bloque nombre */
+          .pa-info-text .pa-email { display: block; }
+
+          /* Fila 2: puntos + período en la misma línea */
+          .pa-mobile-row2 {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+          }
+          .pa-cell--puntos { display: block; }
+          .pa-bar-track { width: 60px; }
+          .pa-cell--venc { display: block; }
+
+          /* Fila 3: botones en grilla de 3 columnas, cómodos para el dedo */
+          .pa-cell--actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 6px;
+          }
+          .pa-btn {
+            height: 38px;
+            font-size: 12px;
+            justify-content: center;
+            border-radius: 8px;
+            padding: 0 6px;
+          }
+          .pa-btn--icon {
+            width: auto;
+            border-radius: 8px;
+          }
+
           .pa-modal { padding: 24px 18px; }
+        }
+
+        @media (max-width: 480px) {
+          .pa-cell--actions {
+            grid-template-columns: 1fr 1fr;
+          }
         }
       `}</style>
     </>
