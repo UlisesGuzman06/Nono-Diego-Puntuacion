@@ -265,7 +265,7 @@ export default async function AdminPage() {
 
         {/* Footer */}
         <div className="adm-footer">
-          <span>© 2024 Nono Diego Pizzería. Panel de Control v2.5.0</span>
+          <span>© 2026 Nono Diego Pizzería. Panel de Control v2.5.0</span>
           <div className="adm-footer-links">
             <span>Soporte</span>
             <span>Privacidad</span>

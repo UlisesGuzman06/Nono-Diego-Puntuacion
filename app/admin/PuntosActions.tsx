@@ -87,6 +87,17 @@ export default function PuntosActions({
   const [isPending, startTransition] = useTransition();
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null); // ID en espera de confirmar borrado
+  const [canjearId, setCanjearId] = useState<string | null>(null); // ID en espera de confirmar canje
+  // Modal de contraseña para hacer admin
+  const [adminModal, setAdminModal] = useState<{
+    userId: string;
+    nombre: string | null;
+  } | null>(null);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminPasswordError, setAdminPasswordError] = useState<string | null>(
+    null,
+  );
+  const [adminLoading, setAdminLoading] = useState(false);
   const router = useRouter();
 
   // Search & filter
@@ -376,6 +387,74 @@ export default function PuntosActions({
     setCreateLoading(false);
   }
 
+  // ── Canjear pizza ── (doble confirmación)
+  async function handleCanjear(userId: string) {
+    if (canjearId !== userId) {
+      setCanjearId(userId);
+      setTimeout(
+        () => setCanjearId((prev) => (prev === userId ? null : prev)),
+        4000,
+      );
+      return;
+    }
+
+    // Segundo click: ejecutar canje
+    setCanjearId(null);
+    setLoadingId(userId);
+
+    startTransition(async () => {
+      const { error } = await supabase.rpc("canjear_pizza", {
+        target_id: userId,
+      });
+      if (error) {
+        alert(`Error al canjear: ${error.message}`);
+      } else {
+        // Resetear puntos y período en el estado local
+        setUsuarios((prev) =>
+          prev.map((u) =>
+            u.id === userId
+              ? { ...u, puntos: 0, periodo_inicio: null, periodo_fin: null }
+              : u,
+          ),
+        );
+      }
+      setLoadingId(null);
+    });
+  }
+
+  // ── Hacer admin ── (abre modal con contraseña)
+  function handleHacerAdmin(userId: string, nombre: string | null) {
+    setAdminPassword("");
+    setAdminPasswordError(null);
+    setAdminModal({ userId, nombre });
+  }
+
+  async function handleAdminConfirm(e: React.FormEvent) {
+    e.preventDefault();
+    if (!adminModal) return;
+
+    const ADMIN_CODE = "03072629";
+    if (adminPassword !== ADMIN_CODE) {
+      setAdminPasswordError("Contraseña incorrecta. Intentá de nuevo.");
+      return;
+    }
+
+    setAdminLoading(true);
+    setAdminPasswordError(null);
+
+    const { error } = await supabase.rpc("hacer_admin", {
+      target_id: adminModal.userId,
+    });
+
+    if (error) {
+      setAdminPasswordError(`Error: ${error.message}`);
+    } else {
+      setUsuarios((prev) => prev.filter((u) => u.id !== adminModal.userId));
+      setAdminModal(null);
+    }
+    setAdminLoading(false);
+  }
+
   // ── Borrar cuenta ── (doble confirmación)
   async function handleBorrar(userId: string, nombre: string | null) {
     // Primer click: marcar como "pendiente de confirmar"
@@ -541,6 +620,24 @@ export default function PuntosActions({
                     −1 Punto
                   </button>
                   <button
+                    className={`pa-btn ${
+                      canjearId === u.id
+                        ? "pa-btn--canjear-confirm"
+                        : "pa-btn--canjear"
+                    }`}
+                    onClick={() => handleCanjear(u.id)}
+                    disabled={isLoading || u.puntos < META}
+                    title={
+                      u.puntos < META
+                        ? `Necesita ${META - u.puntos} punto${META - u.puntos !== 1 ? "s" : ""} más`
+                        : canjearId === u.id
+                          ? "✅ Clic de nuevo para CONFIRMAR el canje"
+                          : "Canjear pizza (10 puntos)"
+                    }
+                  >
+                    {canjearId === u.id ? "✅ ¿Confirmar?" : "🍕 Canjear"}
+                  </button>
+                  <button
                     className="pa-btn pa-btn--reset"
                     onClick={() => handleResetear(u.id)}
                     disabled={isLoading || (u.puntos === 0 && !periodoActivo)}
@@ -563,6 +660,14 @@ export default function PuntosActions({
                     title="Ver panel del usuario"
                   >
                     👁️
+                  </button>
+                  <button
+                    className="pa-btn pa-btn--icon pa-btn--admin"
+                    onClick={() => handleHacerAdmin(u.id, u.nombre)}
+                    disabled={isLoading}
+                    title="Hacer administrador"
+                  >
+                    👑
                   </button>
                   <button
                     className={`pa-btn pa-btn--icon ${
@@ -802,6 +907,78 @@ export default function PuntosActions({
         </>
       )}
 
+      {/* ── Modal Hacer Admin (contraseña) ── */}
+      {adminModal && (
+        <>
+          <div
+            className="pa-overlay"
+            onClick={() => !adminLoading && setAdminModal(null)}
+          />
+          <div className="pa-modal">
+            <div className="pa-modal-header">
+              <div>
+                <h3 className="pa-modal-title">👑 Hacer Administrador</h3>
+                <p className="pa-modal-sub">
+                  {adminModal.nombre || "Este usuario"} pasará a ser admin
+                </p>
+              </div>
+              <button
+                type="button"
+                className="pa-modal-close"
+                onClick={() => setAdminModal(null)}
+                disabled={adminLoading}
+              >
+                ×
+              </button>
+            </div>
+
+            {adminPasswordError && (
+              <div className="error-msg" style={{ marginBottom: 16 }}>
+                {adminPasswordError}
+              </div>
+            )}
+
+            <form onSubmit={handleAdminConfirm}>
+              <div className="form-group">
+                <label htmlFor="admin-pwd">Contraseña de autorización</label>
+                <input
+                  id="admin-pwd"
+                  type="password"
+                  placeholder="Ingresá el código de administrador"
+                  required
+                  autoComplete="off"
+                  value={adminPassword}
+                  onChange={(e) => {
+                    setAdminPassword(e.target.value);
+                    setAdminPasswordError(null);
+                  }}
+                  disabled={adminLoading}
+                />
+              </div>
+              <div className="pa-modal-actions" style={{ marginTop: 20 }}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  style={{ flex: 1 }}
+                  disabled={adminLoading || !adminPassword}
+                >
+                  {adminLoading ? "Procesando..." : "👑 Confirmar"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ flex: 1 }}
+                  onClick={() => setAdminModal(null)}
+                  disabled={adminLoading}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </>
+      )}
+
       <style>{`
         .pa-empty {
           padding: 56px 24px;
@@ -941,6 +1118,30 @@ export default function PuntosActions({
         .pa-btn--edit:hover:not(:disabled)  { background: var(--accent); color: white; }
         .pa-btn--view  { background: rgba(59,130,246,0.12); color: rgb(147,197,253); border-color: rgba(59,130,246,0.3); }
         .pa-btn--view:hover:not(:disabled)  { background: rgba(59,130,246,0.8); color: white; }
+        /* Canjear */
+        .pa-btn--canjear { background: rgba(251,191,36,0.12); color: #fbbf24; border-color: rgba(251,191,36,0.3); }
+        .pa-btn--canjear:hover:not(:disabled) { background: rgba(251,191,36,0.85); color: #1a1200; }
+        .pa-btn--canjear-confirm {
+          background: #fbbf24; color: #1a1200; border-color: #fbbf24;
+          animation: canjearPulse 0.6s ease infinite; font-size: 11px;
+        }
+        @keyframes canjearPulse {
+          0%,100% { box-shadow: 0 0 0 0 rgba(251,191,36,0.5); }
+          50%      { box-shadow: 0 0 0 5px rgba(251,191,36,0); }
+        }
+
+        /* Hacer admin */
+        .pa-btn--admin { background: rgba(168,85,247,0.12); color: #c084fc; border-color: rgba(168,85,247,0.3); }
+        .pa-btn--admin:hover:not(:disabled) { background: rgba(168,85,247,0.8); color: white; }
+        .pa-btn--admin-confirm {
+          background: #a855f7; color: white; border-color: #a855f7;
+          animation: adminPulse 0.6s ease infinite;
+        }
+        @keyframes adminPulse {
+          0%,100% { box-shadow: 0 0 0 0 rgba(168,85,247,0.5); }
+          50%      { box-shadow: 0 0 0 5px rgba(168,85,247,0); }
+        }
+
         .pa-btn--delete { background: var(--danger-bg); color: var(--danger); border-color: rgba(224,92,92,0.3); }
         .pa-btn--delete:hover:not(:disabled) { background: var(--danger); color: white; }
         .pa-btn--delete-confirm {
