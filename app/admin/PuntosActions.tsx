@@ -45,12 +45,25 @@ function calcularPeriodo(periodo_inicio: string | null): {
 }
 
 function PeriodoChip({ periodo_inicio }: { periodo_inicio: string | null }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const { activo, fin, diasRestantes } = calcularPeriodo(periodo_inicio);
 
   if (!activo || !fin) {
     return (
       <span className="pa-chip pa-chip--none" title="Sin período activo">
         Sin período
+      </span>
+    );
+  }
+
+  // Prevención de error de hidratación: el servidor Node y el browser pueden calcular
+  // fechas locales distintas según su zona horaria. Mostramos contenido seguro hasta montar.
+  if (!mounted) {
+    return (
+      <span className="pa-chip pa-chip--ok" style={{ opacity: 0 }}>
+        Cargando...
       </span>
     );
   }
